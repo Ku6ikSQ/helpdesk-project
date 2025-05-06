@@ -2,3 +2,4 @@ node_modules
 docs
 .env
 package-lock.json
+*.xlsx

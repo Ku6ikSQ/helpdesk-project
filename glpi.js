@@ -1,5 +1,6 @@
 require('dotenv').config();
 const axios = require('axios');
+const XLSX = require('xlsx');
 
 function decodeHtml(html) {
     return html
@@ -48,35 +49,33 @@ async function getTickets(sessionToken) {
     }
 }
 
-function printTicket(ticket) {
-    const ticketNumber = ticket.id;
-    const subject = ticket.name;
-    const openingDate = ticket.date;
-    const closingDate = ticket.closedate || 'Не закрыта';
-    const requester = ticket.users_id_recipient;
-    const responsible = ticket.users_id_lastupdater;
-    const laborCosts = ticket.actiontime;
-    const writeOffDate = ticket.takeintoaccountdate;
-    const comments = ticket.content;
+function createExcel(tickets) {
+    const data = tickets.map(ticket => ({
+        'Номер задачи': ticket.id,
+        'Тема, название': ticket.name,
+        'Дата открытия': ticket.date,
+        'Дата закрытия': ticket.closedate || 'Не закрыта',
+        'Обратившийся': ticket.users_id_recipient,
+        'Ответственный': ticket.users_id_lastupdater,
+        'Списанные трудозатраты': ticket.actiontime,
+        'Дата списания': ticket.takeintoaccountdate,
+        'Комментарии': decodeHtml(ticket.content)
+    }));
 
-    console.log(`Номер задачи: ${ticketNumber}`);
-    console.log(`Тема, название: ${subject}`);
-    console.log(`Дата открытия: ${openingDate}`);
-    console.log(`Дата закрытия: ${closingDate}`);
-    console.log(`Обратившийся: ${requester}`);
-    console.log(`Ответственный: ${responsible}`);
-    console.log(`Списанные трудозатраты: ${laborCosts}`);
-    console.log(`Дата списания: ${writeOffDate}`);
-    console.log(`Комментарии: ${decodeHtml(comments)}`);
-    console.log('\n');
+    const worksheet = XLSX.utils.json_to_sheet(data);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Tickets');
+
+    const fileName = 'tickets.xlsx';
+    XLSX.writeFile(workbook, fileName);
 }
 
 (async () => {
     const sessionToken = await initSession();
-    if(!sessionToken) {
+    if (!sessionToken) {
         console.log("Failed to get the session token.");
         return;
     }
     const tickets = await getTickets(sessionToken);
-    tickets.forEach(printTicket);
+    createExcel(tickets);
 })();
