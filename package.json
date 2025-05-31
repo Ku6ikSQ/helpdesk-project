@@ -1,9 +1,10 @@
 {
-  "name": "gpli",
-  "version": "0.0.1",
+  "name": "urfu-proj",
+  "version": "0.2.0",
   "main": "glpi.js",
   "scripts": {
-    "start": "node ./glpi.js",
+    "glpi": "node ./glpi.js",
+    "jira": "node ./jira.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
