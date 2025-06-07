@@ -3,19 +3,15 @@ import fs from "fs"
 import dotenv from "dotenv"
 dotenv.config()
 
-const { GLPI_API_URL, GLPI_APP_TOKEN, GLPI_USERNAME, GLPI_PASSWORD } =
-  process.env
+const { GLPI_API_URL, GLPI_APP_TOKEN, GLPI_USER_TOKEN } = process.env
 
-const mappingFilePath = "./utils/mapping.js"
+const mappingFilePath = "./src/utils/mapping.js"
 
 async function getSessionToken() {
   const response = await axios.get(`${GLPI_API_URL}/initSession`, {
     headers: {
       "App-Token": GLPI_APP_TOKEN,
-    },
-    auth: {
-      username: GLPI_USERNAME,
-      password: GLPI_PASSWORD,
+      Authorization: `user_token ${GLPI_USER_TOKEN}`,
     },
   })
   return response.data.session_token
@@ -38,8 +34,8 @@ async function getUsers(sessionToken) {
 function buildUserMap(users) {
   const map = {}
   users.forEach((user) => {
-    if (user.email) {
-      map[user.email] = user.id
+    if (user.name) {
+      map[user.name] = user.id
     }
   })
   return map
@@ -47,7 +43,7 @@ function buildUserMap(users) {
 
 function saveMappingToFile(map) {
   const entries = Object.entries(map)
-    .map(([email, id]) => `  "${email}": ${id},`)
+    .map(([name, id]) => `  "${name}": ${id},`)
     .join("\n")
 
   const content = `export const userMap = {\n${entries}\n};\n`

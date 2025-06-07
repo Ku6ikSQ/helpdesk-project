@@ -1,4 +1,7 @@
 export const userMap = {
-  "jira_user@example.com": 123, // GLPI user ID
-  "another@example.com": 456,
-}
+  "glpi": 2,
+  "post-only": 3,
+  "tech": 4,
+  "normal": 5,
+  "glpi-system": 6,
+};

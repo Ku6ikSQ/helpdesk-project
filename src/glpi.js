@@ -1,5 +1,5 @@
 import axios from "axios"
-import { config } from "../config/index.js"
+import { config } from "./config/index.js"
 import { log } from "./logger.js"
 
 let sessionToken = null
@@ -43,5 +43,29 @@ export async function getGLPITickets() {
   } catch (error) {
     log(`GLPI get tickets error: ${error.message}`, "error")
     return []
+  }
+}
+
+export async function createGLPITicket({ name, content, users_id_recipient }) {
+  try {
+    const response = await axios.post(
+      `${config.glpi.baseUrl}/Ticket`,
+      {
+        name,
+        content,
+        users_id_recipient,
+      },
+      {
+        headers: {
+          "Session-Token": sessionToken,
+          "App-Token": config.glpi.appToken,
+        },
+      }
+    )
+
+    return response.data
+  } catch (error) {
+    log(`GLPI create ticket error: ${error.message}`, "error")
+    return null
   }
 }
