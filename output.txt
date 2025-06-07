@@ -5,8 +5,9 @@ dotenv.config()
 export const config = {
   jira: {
     baseUrl: process.env.JIRA_BASE_URL,
-    email: process.env.JIRA_EMAIL,
-    token: process.env.JIRA_API_TOKEN,
+    username: process.env.JIRA_USERNAME,
+    password: process.env.JIRA_PASSWORD,
+    projectKey: process.env.JIRA_KEY_PROJECT,
   },
   glpi: {
     baseUrl: process.env.GLPI_BASE_URL,
@@ -30,7 +31,7 @@ export const config = {
 
 [src/glpi.js]
 import axios from "axios"
-import { config } from "../config/index.js"
+import { config } from "./config/index.js"
 import { log } from "./logger.js"
 
 let sessionToken = null
@@ -76,6 +77,32 @@ export async function getGLPITickets() {
     return []
   }
 }
+export async function createGLPITicket({ name, content, users_id_recipient }) {
+  try {
+    const response = await axios.post(
+      `${config.glpi.baseUrl}/Ticket`,
+      {
+        input: {
+          // <-- ОБЕРНУТЬ в input
+          name,
+          content,
+          users_id_recipient,
+        },
+      },
+      {
+        headers: {
+          "Session-Token": sessionToken,
+          "App-Token": config.glpi.appToken,
+        },
+      }
+    )
+
+    return response.data
+  } catch (error) {
+    log(`GLPI create ticket error: ${error.message}`, "error")
+    return null
+  }
+}
 
 [src/index.js]
 import { initGLPISession, killGLPISession } from "./glpi.js"
@@ -100,24 +127,38 @@ main()
 
 [src/jira.js]
 import axios from "axios"
-import { config } from "../config/index.js"
+import { config } from "./config/index.js"
 import { log } from "./logger.js"
 
-const authHeader = {
-  Authorization: `Basic ${Buffer.from(
-    `${config.jira.email}:${config.jira.token}`
-  ).toString("base64")}`,
+const auth = Buffer.from(
+  `${config.jira.username}:${config.jira.password}`
+).toString("base64")
+const jiraHeaders = {
+  Authorization: `Basic ${auth}`,
+  Accept: "application/json",
 }
 
 export async function getJiraIssues() {
   try {
     const response = await axios.get(
-      `${config.jira.baseUrl}/rest/api/3/search?jql=project=TEST`,
-      { headers: authHeader }
+      `${config.jira.baseUrl}/rest/api/2/search`,
+      {
+        headers: jiraHeaders,
+        params: {
+          jql: `project=${config.jira.projectKey}`,
+          maxResults: 100,
+          fields: "summary,description",
+        },
+      }
     )
     return response.data.issues || []
   } catch (error) {
-    log(`Jira get issues error: ${error.message}`, "error")
+    log(
+      `Jira get issues error: ${error.response?.status} – ${
+        JSON.stringify(error.response?.data) || error.message
+      }`,
+      "error"
+    )
     return []
   }
 }
@@ -199,34 +240,47 @@ main()
 
 [src/sync.js]
 import { getJiraIssues } from "./jira.js"
-import { getGLPITickets } from "./glpi.js"
-import { config } from "../config/index.js"
+import { getGLPITickets, createGLPITicket } from "./glpi.js"
+import { config } from "./config/index.js"
 import { log } from "./logger.js"
 import { userMap } from "./utils/mapping.js"
 import axios from "axios"
 
-// Заголовки для Jira API
+const auth = Buffer.from(
+  `${config.jira.username}:${config.jira.password}`
+).toString("base64")
 const jiraHeaders = {
-  Authorization: `Basic ${Buffer.from(
-    `${config.jira.email}:${config.jira.token}`
-  ).toString("base64")}`,
+  Authorization: `Basic ${auth}`,
   "Content-Type": "application/json",
+  Accept: "application/json",
 }
 
 export async function syncJiraToGLPI() {
   const issues = await getJiraIssues()
-  log(`Fetched ${issues.length} issues from Jira`)
+  const existingTickets = await getGLPITickets()
+  const existingNames = new Set(existingTickets.map((t) => t.name))
 
-  // TODO: реализовать сравнение с GLPI и создание тикетов
   for (const issue of issues) {
     const summary = issue.fields.summary
     const description =
       issue.fields.description?.content?.[0]?.content?.[0]?.text ||
       "No description"
 
-    // log или заготовка для создания в GLPI
-    log(`📝 Would sync Jira issue: ${summary}`)
-    // TODO: добавить создание тикета в GLPI
+    if (existingNames.has(summary)) {
+      log(`🟡 GLPI ticket already exists for Jira issue "${summary}", skipping`)
+      continue
+    }
+
+    const userId = userMap["glpi"] // Адаптируй маппинг под нужного пользователя
+    const result = await createGLPITicket({
+      name: summary,
+      content: description,
+      users_id_recipient: userId,
+    })
+
+    if (result) {
+      log(`✅ Created GLPI ticket for Jira issue ${issue.key}`)
+    }
   }
 }
 
@@ -238,12 +292,13 @@ export async function syncGLPIToJira() {
   const existingSummaries = new Set(existingIssues.map((i) => i.fields.summary))
 
   for (const ticket of tickets) {
-    const summary = ticket.name || `GLPI Ticket ${ticket.id}`
-    const description = ticket.content || `Ticket ID: ${ticket.id}`
-    const reporterId = ticket.users_id_recipient
-    const reporterEmail = Object.keys(userMap).find(
-      (key) => userMap[key] === reporterId
-    )
+    // Безопасное получение summary из тикета
+    const summary =
+      (ticket.name && ticket.name.trim()) ||
+      (ticket.title && ticket.title.trim()) ||
+      `GLPI Ticket ${ticket.id}`
+
+    const description = ticket.content || "No description"
 
     if (existingSummaries.has(summary)) {
       log(`🟡 Jira issue already exists for GLPI ticket "${summary}", skipping`)
@@ -252,27 +307,26 @@ export async function syncGLPIToJira() {
 
     const issuePayload = {
       fields: {
-        project: { key: process.env.JIRA_KEY_PROJECT },
-        summary: summary,
-        description: description,
+        project: { key: config.jira.projectKey },
+        summary,
+        description,
         issuetype: { name: "Task" },
-        ...(reporterEmail ? { reporter: { name: reporterEmail } } : {}),
       },
     }
 
     try {
       await axios.post(
-        `${config.jira.baseUrl}/rest/api/3/issue`,
+        `${config.jira.baseUrl}/rest/api/2/issue`,
         issuePayload,
-        {
-          headers: jiraHeaders,
-        }
+        { headers: jiraHeaders }
       )
 
       log(`✅ Created Jira issue for GLPI ticket ${ticket.id}`)
     } catch (err) {
       log(
-        `❌ Failed to create Jira issue for GLPI ticket ${ticket.id}: ${err.message}`,
+        `❌ Failed to create Jira issue for GLPI ticket ${ticket.id}: ${
+          err.response?.status
+        } – ${JSON.stringify(err.response?.data) || err.message}`,
         "error"
       )
     }

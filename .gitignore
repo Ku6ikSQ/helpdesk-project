@@ -3,4 +3,4 @@ docs
 .env
 package-lock.json
 *.xlsx
-output.txt
+*.txt

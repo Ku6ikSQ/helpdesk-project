@@ -45,15 +45,17 @@ export async function getGLPITickets() {
     return []
   }
 }
-
 export async function createGLPITicket({ name, content, users_id_recipient }) {
   try {
     const response = await axios.post(
       `${config.glpi.baseUrl}/Ticket`,
       {
-        name,
-        content,
-        users_id_recipient,
+        input: {
+          // <-- ОБЕРНУТЬ в input
+          name,
+          content,
+          users_id_recipient,
+        },
       },
       {
         headers: {

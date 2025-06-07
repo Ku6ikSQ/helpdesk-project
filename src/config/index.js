@@ -4,8 +4,9 @@ dotenv.config()
 export const config = {
   jira: {
     baseUrl: process.env.JIRA_BASE_URL,
-    email: process.env.JIRA_EMAIL,
-    token: process.env.JIRA_API_TOKEN,
+    username: process.env.JIRA_USERNAME,
+    password: process.env.JIRA_PASSWORD,
+    projectKey: process.env.JIRA_KEY_PROJECT,
   },
   glpi: {
     baseUrl: process.env.GLPI_BASE_URL,
