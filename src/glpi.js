@@ -51,7 +51,6 @@ export async function createGLPITicket({ name, content, users_id_recipient }) {
       `${config.glpi.baseUrl}/Ticket`,
       {
         input: {
-          // <-- ОБЕРНУТЬ в input
           name,
           content,
           users_id_recipient,

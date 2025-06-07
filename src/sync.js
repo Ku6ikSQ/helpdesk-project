@@ -51,7 +51,6 @@ export async function syncGLPIToJira() {
   const existingSummaries = new Set(existingIssues.map((i) => i.fields.summary))
 
   for (const ticket of tickets) {
-    // Безопасное получение summary из тикета
     const summary =
       (ticket.name && ticket.name.trim()) ||
       (ticket.title && ticket.title.trim()) ||
