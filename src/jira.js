@@ -55,3 +55,17 @@ export async function deleteJiraIssue(issueIdOrKey) {
     return false
   }
 }
+
+export async function updateJiraIssue(issueIdOrKey, fields) {
+  try {
+    await axios.put(
+      `${config.jira.baseUrl}/rest/api/2/issue/${issueIdOrKey}`,
+      { fields },
+      { headers: jiraHeaders }
+    )
+    return true
+  } catch (error) {
+    log(`Jira update issue error: ${error.message}`, "error")
+    return false
+  }
+}

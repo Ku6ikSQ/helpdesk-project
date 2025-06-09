@@ -89,3 +89,31 @@ export async function deleteGLPITicket(ticketId) {
     return false
   }
 }
+
+export async function updateGLPITicket(
+  ticketId,
+  { name, content, users_id_recipient }
+) {
+  try {
+    const response = await axios.put(
+      `${config.glpi.baseUrl}/Ticket/${ticketId}`,
+      {
+        input: {
+          name,
+          content,
+          users_id_recipient,
+        },
+      },
+      {
+        headers: {
+          "Session-Token": sessionToken,
+          "App-Token": config.glpi.appToken,
+        },
+      }
+    )
+    return response.data
+  } catch (error) {
+    log(`GLPI update ticket error: ${error.message}`, "error")
+    return null
+  }
+}

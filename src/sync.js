@@ -1,5 +1,10 @@
-import { getJiraIssues, deleteJiraIssue } from "./jira.js"
-import { getGLPITickets, createGLPITicket, deleteGLPITicket } from "./glpi.js"
+import { getJiraIssues, deleteJiraIssue, updateJiraIssue } from "./jira.js"
+import {
+  getGLPITickets,
+  createGLPITicket,
+  deleteGLPITicket,
+  updateGLPITicket,
+} from "./glpi.js"
 import { config } from "./config/index.js"
 import { log } from "./logger.js"
 import { userMap } from "./utils/mapping.js"
@@ -24,7 +29,6 @@ export async function syncJiraToGLPI() {
   const issues = await getJiraIssues()
   const existingTickets = await getGLPITickets()
 
-  // Индекс для быстрого поиска тикетов по Jira-ID из content
   const ticketsByJiraId = new Map()
   for (const ticket of existingTickets) {
     const jiraIdMatch = ticket.content?.match(/Jira-ID: ([A-Z]+-\d+)/)
@@ -41,19 +45,37 @@ export async function syncJiraToGLPI() {
         ? issue.fields.description
         : JSON.stringify(issue.fields.description)
 
-    // Пропускаем задачи, созданные из GLPI (с меткой GLPI-ID в описании Jira)
     if (/GLPI-ID: \d+/.test(description)) {
       log(`🟡 Jira issue ${issueKey} был создан из GLPI, пропускаем`)
       continue
     }
 
-    // Если задача уже синхронизирована (есть тикет с Jira-ID)
-    if (ticketsByJiraId.has(issueKey)) {
-      log(`🟡 GLPI тикет уже существует для Jira issue ${issueKey}, пропускаем`)
+    const existingTicket = ticketsByJiraId.get(issueKey)
+
+    const userId = userMap["glpi"]
+
+    if (existingTicket) {
+      // Проверяем, есть ли изменения
+      if (
+        existingTicket.name !== `${issueKey}: ${summary}` ||
+        existingTicket.content !== `Jira-ID: ${issueKey}\n\n${description}`
+      ) {
+        // Обновляем тикет
+        const updated = await updateGLPITicket(existingTicket.id, {
+          name: `${issueKey}: ${summary}`,
+          content: `Jira-ID: ${issueKey}\n\n${description}`,
+          users_id_recipient: userId,
+        })
+        if (updated) {
+          log(`🔄 Обновлён GLPI тикет для Jira issue ${issueKey}`)
+        }
+      } else {
+        log(`🟡 GLPI тикет для Jira issue ${issueKey} без изменений`)
+      }
       continue
     }
 
-    const userId = userMap["glpi"] // Можно кастомизировать по необходимости
+    // Создаём новый тикет, если нет
     const result = await createGLPITicket({
       name: `${issueKey}: ${summary}`,
       content: `Jira-ID: ${issueKey}\n\n${description}`,
@@ -78,7 +100,6 @@ export async function syncGLPIToJira() {
 
   const existingIssues = await getJiraIssues()
 
-  // Индекс для быстрого поиска Jira issue по GLPI-ID из описания
   const issuesByGlpiId = new Map()
   for (const issue of existingIssues) {
     const glpiIdMatch = issue.fields.description?.match(/GLPI-ID: (\d+)/)
@@ -95,36 +116,46 @@ export async function syncGLPIToJira() {
       `GLPI Ticket ${ticketId}`
     const description = ticket.content || "No description"
 
-    // Пропускаем задачи, созданные из Jira (с меткой Jira-ID в содержимом)
     if (/Jira-ID: [A-Z]+-\d+/.test(description)) {
       log(`🟡 GLPI тикет ${ticketId} был создан из Jira, пропускаем`)
       continue
     }
 
-    // Если задача уже синхронизирована (есть Jira issue с GLPI-ID)
-    if (issuesByGlpiId.has(ticketId)) {
-      log(
-        `🟡 Jira issue уже существует для GLPI тикета ${ticketId}, пропускаем`
-      )
+    const existingIssue = issuesByGlpiId.get(ticketId)
+
+    const issuePayloadFields = {
+      project: { key: config.jira.projectKey },
+      summary: `GLPI-${ticketId}: ${summary}`,
+      description: `GLPI-ID: ${ticketId}\n\n${description}`,
+      issuetype: { name: "Task" },
+    }
+
+    if (existingIssue) {
+      // Проверяем изменения
+      if (
+        existingIssue.fields.summary !== issuePayloadFields.summary ||
+        existingIssue.fields.description !== issuePayloadFields.description
+      ) {
+        const updated = await updateJiraIssue(
+          existingIssue.key,
+          issuePayloadFields
+        )
+        if (updated) {
+          log(`🔄 Обновлен Jira issue для GLPI тикета ${ticketId}`)
+        }
+      } else {
+        log(`🟡 Jira issue для GLPI тикета ${ticketId} без изменений`)
+      }
       continue
     }
 
-    const issuePayload = {
-      fields: {
-        project: { key: config.jira.projectKey },
-        summary: `GLPI-${ticketId}: ${summary}`,
-        description: `GLPI-ID: ${ticketId}\n\n${description}`,
-        issuetype: { name: "Task" },
-      },
-    }
-
+    // Создаём новый issue, если нет
     try {
       await axios.post(
         `${config.jira.baseUrl}/rest/api/2/issue`,
-        issuePayload,
+        { fields: issuePayloadFields },
         { headers: jiraHeaders }
       )
-
       log(`✅ Создан Jira issue для GLPI тикета ${ticketId}`)
     } catch (err) {
       log(
