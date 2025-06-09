@@ -70,3 +70,22 @@ export async function createGLPITicket({ name, content, users_id_recipient }) {
     return null
   }
 }
+
+export async function deleteGLPITicket(ticketId) {
+  if (!config.allowDeletion) {
+    log(`⚠️ Deletion disabled - skipping deletion of GLPI ticket ${ticketId}`)
+    return false
+  }
+  try {
+    await axios.delete(`${config.glpi.baseUrl}/Ticket/${ticketId}`, {
+      headers: {
+        "Session-Token": sessionToken,
+        "App-Token": config.glpi.appToken,
+      },
+    })
+    return true
+  } catch (error) {
+    log(`GLPI delete ticket error: ${error.message}`, "error")
+    return false
+  }
+}

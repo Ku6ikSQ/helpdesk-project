@@ -26,4 +26,5 @@ export const config = {
     },
   },
   dryRun: false,
+  allowDeletion: process.env.ALLOW_DELETION === "true" || false,
 }

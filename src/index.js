@@ -1,5 +1,5 @@
 import { initGLPISession, killGLPISession } from "./glpi.js"
-import { syncJiraToGLPI, syncGLPIToJira } from "./sync.js"
+import { syncJiraToGLPI, syncGLPIToJira, syncDeletedItems } from "./sync.js"
 import { log } from "./logger.js"
 
 async function main() {
@@ -7,6 +7,7 @@ async function main() {
   await initGLPISession()
 
   try {
+    if (mode === "cleanup" || mode === "both") await syncDeletedItems()
     if (mode === "jira2glpi" || mode === "both") await syncJiraToGLPI()
     if (mode === "glpi2jira" || mode === "both") await syncGLPIToJira()
   } catch (error) {

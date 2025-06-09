@@ -34,3 +34,24 @@ export async function getJiraIssues() {
     return []
   }
 }
+
+export async function deleteJiraIssue(issueIdOrKey) {
+  if (!config.allowDeletion) {
+    log(
+      `⚠️ Deletion disabled - skipping deletion of Jira issue ${issueIdOrKey}`
+    )
+    return false
+  }
+  try {
+    await axios.delete(
+      `${config.jira.baseUrl}/rest/api/2/issue/${issueIdOrKey}`,
+      {
+        headers: jiraHeaders,
+      }
+    )
+    return true
+  } catch (error) {
+    log(`Jira delete issue error: ${error.message}`, "error")
+    return false
+  }
+}
