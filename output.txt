@@ -280,7 +280,7 @@ async function main() {
 main()
 
 [src/sync.js]
-import { getJiraIssues } from "./jira.js"
+import { getJiraIssues, deleteJiraIssue } from "./jira.js"
 import { getGLPITickets, createGLPITicket, deleteGLPITicket } from "./glpi.js"
 import { config } from "./config/index.js"
 import { log } from "./logger.js"
@@ -296,16 +296,22 @@ const jiraHeaders = {
   Accept: "application/json",
 }
 
+/**
+ * Синхронизация Jira → GLPI
+ * Пропускает задачи, которые были созданы из GLPI (с меткой GLPI-ID)
+ * Пропускает уже синхронизированные задачи (по метке Jira-ID в GLPI)
+ * Создаёт новые задачи в GLPI с меткой Jira-ID
+ */
 export async function syncJiraToGLPI() {
   const issues = await getJiraIssues()
   const existingTickets = await getGLPITickets()
 
-  // Собираем все Jira-ключи, которые уже есть в GLPI (по name)
-  const existingJiraKeys = new Set()
+  // Индекс для быстрого поиска тикетов по Jira-ID из content
+  const ticketsByJiraId = new Map()
   for (const ticket of existingTickets) {
-    const match = ticket.name.match(/^([A-Z]+-\d+):/)
-    if (match) {
-      existingJiraKeys.add(match[1])
+    const jiraIdMatch = ticket.content?.match(/Jira-ID: ([A-Z]+-\d+)/)
+    if (jiraIdMatch) {
+      ticketsByJiraId.set(jiraIdMatch[1], ticket)
     }
   }
 
@@ -313,22 +319,23 @@ export async function syncJiraToGLPI() {
     const issueKey = issue.key
     const summary = issue.fields.summary
     const description =
-      issue.fields.description?.content?.[0]?.content?.[0]?.text ||
-      "No description"
+      typeof issue.fields.description === "string"
+        ? issue.fields.description
+        : JSON.stringify(issue.fields.description)
 
-    // Пропускаем, если задача была создана из GLPI
-    if (/GLPI-ID: \d+/.test(issue.fields.description)) {
-      log(`🟡 Jira issue ${issueKey} was created from GLPI, skipping`)
+    // Пропускаем задачи, созданные из GLPI (с меткой GLPI-ID в описании Jira)
+    if (/GLPI-ID: \d+/.test(description)) {
+      log(`🟡 Jira issue ${issueKey} был создан из GLPI, пропускаем`)
       continue
     }
 
-    // Пропускаем, если такой Jira issue уже есть в GLPI
-    if (existingJiraKeys.has(issueKey)) {
-      log(`🟡 GLPI ticket already exists for Jira issue ${issueKey}, skipping`)
+    // Если задача уже синхронизирована (есть тикет с Jira-ID)
+    if (ticketsByJiraId.has(issueKey)) {
+      log(`🟡 GLPI тикет уже существует для Jira issue ${issueKey}, пропускаем`)
       continue
     }
 
-    const userId = userMap["glpi"] // Маппинг пользователя
+    const userId = userMap["glpi"] // Можно кастомизировать по необходимости
     const result = await createGLPITicket({
       name: `${issueKey}: ${summary}`,
       content: `Jira-ID: ${issueKey}\n\n${description}`,
@@ -336,23 +343,29 @@ export async function syncJiraToGLPI() {
     })
 
     if (result) {
-      log(`✅ Created GLPI ticket for Jira issue ${issueKey}`)
+      log(`✅ Создан тикет в GLPI для Jira issue ${issueKey}`)
     }
   }
 }
 
+/**
+ * Синхронизация GLPI → Jira
+ * Пропускает задачи, которые были созданы из Jira (с меткой Jira-ID в описании GLPI)
+ * Пропускает уже синхронизированные задачи (по метке GLPI-ID в описании Jira)
+ * Создаёт новые задачи в Jira с меткой GLPI-ID
+ */
 export async function syncGLPIToJira() {
   const tickets = await getGLPITickets()
-  log(`Fetched ${tickets.length} tickets from GLPI`)
+  log(`Получено ${tickets.length} тикетов из GLPI`)
 
   const existingIssues = await getJiraIssues()
 
-  // Собираем GLPI-идентификаторы, которые уже синхронизированы в Jira
-  const existingGLPIIds = new Set()
+  // Индекс для быстрого поиска Jira issue по GLPI-ID из описания
+  const issuesByGlpiId = new Map()
   for (const issue of existingIssues) {
-    const match = issue.fields.description?.match(/GLPI-ID: (\d+)/)
-    if (match) {
-      existingGLPIIds.add(parseInt(match[1]))
+    const glpiIdMatch = issue.fields.description?.match(/GLPI-ID: (\d+)/)
+    if (glpiIdMatch) {
+      issuesByGlpiId.set(parseInt(glpiIdMatch[1]), issue)
     }
   }
 
@@ -364,9 +377,17 @@ export async function syncGLPIToJira() {
       `GLPI Ticket ${ticketId}`
     const description = ticket.content || "No description"
 
-    // Пропускаем, если задача уже была синхронизирована в Jira
-    if (existingGLPIIds.has(ticketId)) {
-      log(`🟡 Jira issue already exists for GLPI ticket ${ticketId}, skipping`)
+    // Пропускаем задачи, созданные из Jira (с меткой Jira-ID в содержимом)
+    if (/Jira-ID: [A-Z]+-\d+/.test(description)) {
+      log(`🟡 GLPI тикет ${ticketId} был создан из Jira, пропускаем`)
+      continue
+    }
+
+    // Если задача уже синхронизирована (есть Jira issue с GLPI-ID)
+    if (issuesByGlpiId.has(ticketId)) {
+      log(
+        `🟡 Jira issue уже существует для GLPI тикета ${ticketId}, пропускаем`
+      )
       continue
     }
 
@@ -386,10 +407,10 @@ export async function syncGLPIToJira() {
         { headers: jiraHeaders }
       )
 
-      log(`✅ Created Jira issue for GLPI ticket ${ticketId}`)
+      log(`✅ Создан Jira issue для GLPI тикета ${ticketId}`)
     } catch (err) {
       log(
-        `❌ Failed to create Jira issue for GLPI ticket ${ticketId}: ${
+        `❌ Ошибка создания Jira issue для GLPI тикета ${ticketId}: ${
           err.response?.status
         } – ${JSON.stringify(err.response?.data) || err.message}`,
         "error"
@@ -398,6 +419,11 @@ export async function syncGLPIToJira() {
   }
 }
 
+/**
+ * Синхронизация удаления
+ * Если удалена задача в Jira — удаляем связанный тикет в GLPI
+ * Если удалён тикет в GLPI — удаляем связанный issue в Jira
+ */
 export async function syncDeletedItems() {
   const jiraIssues = await getJiraIssues()
   const glpiTickets = await getGLPITickets()
@@ -410,9 +436,7 @@ export async function syncDeletedItems() {
     if (jiraKeyMatch) {
       const jiraKey = jiraKeyMatch[1]
       if (!jiraMap.has(jiraKey)) {
-        log(
-          `🗑️ Jira issue ${jiraKey} was deleted, deleting GLPI ticket ${ticket.id}`
-        )
+        log(`🗑️ Jira issue ${jiraKey} удалена, удаляем GLPI тикет ${ticket.id}`)
         await deleteGLPITicket(ticket.id)
       }
     }
@@ -423,9 +447,7 @@ export async function syncDeletedItems() {
     if (glpiIdMatch) {
       const glpiId = parseInt(glpiIdMatch[1])
       if (!glpiMap.has(glpiId)) {
-        log(
-          `🗑️ GLPI ticket ${glpiId} was deleted, deleting Jira issue ${issue.key}`
-        )
+        log(`🗑️ GLPI тикет ${glpiId} удалён, удаляем Jira issue ${issue.key}`)
         await deleteJiraIssue(issue.key)
       }
     }
