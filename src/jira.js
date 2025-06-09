@@ -19,7 +19,7 @@ export async function getJiraIssues() {
         params: {
           jql: `project=${config.jira.projectKey}`,
           maxResults: 100,
-          fields: "summary,description",
+          fields: "summary,description,updated,reporter",
         },
       }
     )
