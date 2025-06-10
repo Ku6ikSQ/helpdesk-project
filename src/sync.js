@@ -10,7 +10,6 @@ import {
   deleteGLPITicket,
   updateGLPITicket,
 } from "./glpi.js"
-import { config } from "./config/index.js"
 import { userMap } from "./utils/mapping.js"
 import { loadMap, saveMap } from "./utils/jiraGlpiMapUtils.js"
 import { log } from "./logger.js"
@@ -18,7 +17,6 @@ import { DateTime } from "luxon"
 
 function parseGLPIDate(dateStr) {
   if (!dateStr) return null
-  // Парсим как UTC, потом переводим в Asia/Yekaterinburg
   return DateTime.fromFormat(dateStr, "yyyy-MM-dd HH:mm:ss", {
     zone: "utc",
   }).setZone("Asia/Yekaterinburg")
@@ -26,7 +24,6 @@ function parseGLPIDate(dateStr) {
 
 function parseJiraDate(dateStr) {
   if (!dateStr) return null
-  // Jira обычно возвращает ISO строку с UTC, Luxon корректно её распарсит
   return DateTime.fromISO(dateStr, { zone: "utc" }).setZone(
     "Asia/Yekaterinburg"
   )
@@ -41,17 +38,25 @@ function isNewer(glpiTicket, jiraIssue) {
     return false
   }
 
-  // log(
-  //   `JIRA: ${jiraDate.toISO()} ::: GLPI: ${glpiDate.toISO()} ::: RESULT: ${
-  //     glpiDate > jiraDate
-  //   }`
-  // )
-
   return glpiDate > jiraDate
 }
 
-function normalizeName(name = "") {
-  return name.trim().toLowerCase()
+// Проверка, изменились ли данные между Jira и GLPI тикетом
+function changed(jiraIssue, glpiTicket) {
+  if (!jiraIssue || !glpiTicket) return true
+
+  const jiraName = jiraIssue.fields.summary || ""
+  const jiraDesc = jiraIssue.fields.description || ""
+  const glpiName = glpiTicket.name || ""
+  const glpiContent = glpiTicket.content || ""
+  const glpiUser = glpiTicket.users_id_recipient
+  const jiraReporterName = jiraIssue.fields.reporter?.displayName || ""
+
+  if (jiraName !== glpiName) return true
+  if (jiraDesc !== glpiContent) return true
+  if (glpiUser !== (userMap[jiraReporterName] || userMap["glpi"])) return true
+
+  return false
 }
 
 // Создание и обновление GLPI из Jira
@@ -61,39 +66,32 @@ export async function syncJiraToGLPI() {
   const map = loadMap()
 
   for (const issue of jiraIssues) {
-    const name = issue.fields.summary
-    const content = issue.fields.description || ""
-    const reporter = issue.fields.reporter?.displayName || "glpi"
     const linkedGlpiId = map[issue.id]
     const matchingTicket = glpiTickets.find((t) => t.id === linkedGlpiId)
 
     if (matchingTicket) {
-      // const jiraUpdated = new Date(issue.fields.updated)
-      // const glpiUpdated = new Date(matchingTicket.date_mod)
-
       if (!isNewer(matchingTicket, issue)) {
-        if (
-          matchingTicket.content !== content ||
-          matchingTicket.users_id_recipient !== userMap[reporter]
-        ) {
+        if (changed(issue, matchingTicket)) {
           await updateGLPITicket(matchingTicket.id, {
-            name,
-            content,
-            users_id_recipient: userMap[reporter] || userMap["glpi"],
+            name: issue.fields.summary,
+            content: issue.fields.description || "",
+            users_id_recipient:
+              userMap[issue.fields.reporter?.displayName] || userMap["glpi"],
           })
-          log(`✅ Обновлён GLPI тикет: ${name}`)
+          log(`✅ Обновлён GLPI тикет: ${issue.fields.summary}`)
         }
       }
     } else {
       const created = await createGLPITicket({
-        name,
-        content,
-        users_id_recipient: userMap[reporter] || userMap["glpi"],
+        name: issue.fields.summary,
+        content: issue.fields.description || "",
+        users_id_recipient:
+          userMap[issue.fields.reporter?.displayName] || userMap["glpi"],
       })
       if (created?.id) {
         map[issue.id] = created.id
         saveMap(map)
-        log(`➕ Создан GLPI тикет из Jira: ${name}`)
+        log(`➕ Создан GLPI тикет из Jira: ${issue.fields.summary}`)
       }
     }
   }
@@ -106,44 +104,41 @@ export async function syncGLPIToJira() {
   const map = loadMap()
 
   for (const ticket of glpiTickets) {
-    const name = ticket.name
-    const content = ticket.content || ""
     const linkedJiraId = Object.entries(map).find(
       ([_, glpiId]) => glpiId === ticket.id
     )?.[0]
     const matchingIssue = jiraIssues.find((i) => i.id === linkedJiraId)
 
     if (matchingIssue) {
-      // const jiraUpdated = new Date(matchingIssue.fields.updated)
-      // const glpiUpdated = new Date(ticket.date_mod)
-
       if (isNewer(ticket, matchingIssue)) {
-        const updates = {}
-        if (matchingIssue.fields.description !== content) {
-          updates.description = content
-        }
-        if (matchingIssue.fields.summary !== name) {
-          updates.summary = name
-        }
+        if (changed(matchingIssue, ticket)) {
+          const updates = {}
+          if (matchingIssue.fields.description !== ticket.content) {
+            updates.description = ticket.content
+          }
+          if (matchingIssue.fields.summary !== ticket.name) {
+            updates.summary = ticket.name
+          }
 
-        if (Object.keys(updates).length > 0) {
-          await updateJiraIssue(matchingIssue.id, updates)
-          log(
-            `✅ Обновлена Jira задача: ${name} (${Object.keys(updates).join(
-              ", "
-            )})`
-          )
+          if (Object.keys(updates).length > 0) {
+            await updateJiraIssue(matchingIssue.id, updates)
+            log(
+              `✅ Обновлена Jira задача: ${ticket.name} (${Object.keys(
+                updates
+              ).join(", ")})`
+            )
+          }
         }
       }
     } else {
       const created = await createJiraIssue({
-        summary: name,
-        description: content,
+        summary: ticket.name,
+        description: ticket.content || "",
       })
       if (created?.id) {
         map[created.id] = ticket.id
         saveMap(map)
-        log(`➕ Создана Jira задача из GLPI: ${name}`)
+        log(`➕ Создана Jira задача из GLPI: ${ticket.name}`)
       }
     }
   }
