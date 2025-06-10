@@ -10,6 +10,37 @@ const jiraHeaders = {
   Accept: "application/json",
 }
 
+export async function createJiraIssue({ summary, description }) {
+  try {
+    const response = await axios.post(
+      `${config.jira.baseUrl}/rest/api/2/issue`,
+      {
+        fields: {
+          project: {
+            key: config.jira.projectKey,
+          },
+          summary,
+          description,
+          issuetype: {
+            name: "Task", // или "Bug", "Story" — зависит от конфигурации проекта
+          },
+        },
+      },
+      {
+        headers: {
+          ...jiraHeaders,
+          "Content-Type": "application/json",
+        },
+      }
+    )
+    log(`Создана Jira задача: ${response.data.key}`)
+    return response.data
+  } catch (error) {
+    log(`Jira create issue error: ${error.message}`, "error")
+    return null
+  }
+}
+
 export async function getJiraIssues() {
   try {
     const response = await axios.get(
